@@ -1,0 +1,20 @@
+# For more information about this configuration visit
+# https://github.com/fastlane/fastlane/tree/master/gym#gymfile
+
+# In general, you can use the options available
+# fastlane gym --help
+# Remove the # in front of the line to enable the option
+
+# scheme "Example"
+
+# sdk "iphoneos9.0"
+
+silent "true"
+include_bitcode "true"
+
+export_method "ad-hoc"
+codesigning_identity "iPhone Distribution"
+
+archive_path "../bin/Temp/Archives"
+derived_data_path "../bin/Temp/DerivedData"
+output_directory "../bin/iOS"

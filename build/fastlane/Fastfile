@@ -1,0 +1,176 @@
+# Customise this file, documentation can be found here:
+# https://github.com/fastlane/fastlane/tree/master/fastlane/docs
+# All available actions: https://docs.fastlane.tools/actions
+# can also be listed using the `fastlane actions` command
+
+# Change the syntax highlighting to Ruby
+# All lines starting with a # are ignored when running `fastlane`
+# vi: ft=ruby
+
+# If you want to automatically update fastlane if a new version is available:
+# update_fastlane
+
+# This is the minimum version number required.
+# Update this, if you use features of a newer version
+fastlane_version "2.28.0"
+
+default_platform :ios
+
+platform :ios do
+  before_all do
+    # ENV["SLACK_URL"] = "https://hooks.slack.com/services/..."
+
+    # Set project for commit_version_bump, which seems to get confused by projects in other folders
+    ENV['FL_BUILD_NUMBER_PROJECT'] = 'Unity-iPhone.xcodeproj'
+    # ensure_git_status_clean unless ENV['FL_NO_ENSURE_CLEAN']
+  end
+
+  desc "Set up the certificates and provisioning profiles on a new machine"
+  lane :certificates do
+    match(app_identifier: [CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier)], readonly: true)
+  end
+
+  desc "Submit a new Beta Build to Apple TestFlight"
+  desc "This will also make sure the profile is up to date"
+  lane :beta do
+    register_devices(devices_file: "./devices.txt")
+    match(type: "adhoc", force_for_new_devices: true)
+    # match(type: "appstore") # more information: https://codesigning.guide
+    gym(include_bitcode: true) # Build your app - more options available
+
+    pilot(
+      skip_waiting_for_build_processing: true
+    )
+
+    # sh "your_script.sh"
+    # You can also use other beta testing services here (run `fastlane actions`)
+  end
+
+  desc "Deploy a new version to the App Store"
+  lane :release do
+    match(type: "appstore")
+    snapshot
+    gym # Build your app - more options available
+    deliver(force: true)
+    frameit
+  end
+
+  desc "Upload to HockeyApp"
+  lane :hockeyapp do
+    build
+    # hockey
+  end
+
+  desc "Add badge to app icons."
+  lane :icon do |options|
+    Dir.chdir("../../src/GameClient/Assets/Icon/Android") do
+      sh 'pwd'
+
+      isAlpha = true
+      shield_version = ENV['GitVersion_MajorMinorPatch'] + '-' + ENV['GitVersion_Major'] + ENV['GitVersion_Minor'] + ENV['GitVersion_CommitsSinceVersionSourcePadded']
+
+      if options[:beta]
+        # Only when beta is true
+        isAlpha = false
+        shield_version = ENV['GitVersion_MajorMinorPatch'] + '-' + Time.now.strftime('%y%m') + get_month_week(Date.today).to_s
+      end
+
+      UI.message 'Shield version: ' + shield_version
+
+      badge(
+        dark: false,
+        shield: shield_version + '-orange',
+        shield_no_resize: false,
+        glob: "/**/*.{png,PNG}",
+        alpha_channel: true,
+        alpha: isAlpha
+      )
+    end
+  end
+
+  desc "Build XCode project and package .ipa file"
+  lane :build do
+    xcodeproj = File.join(Dir.pwd, '../../bin/iOS', ENV['FL_BUILD_NUMBER_PROJECT'])
+    team_id = CredentialsManager::AppfileConfig.try_fetch_value(:team_id)
+
+    register_devices(devices_file: "./devices.txt")
+    match
+
+    automatic_code_signing(
+      path: xcodeproj,
+      use_automatic_signing: false,
+    )
+
+    update_project_team(
+      path: xcodeproj,
+      teamid: team_id
+    )
+
+    update_provisioning_profile_specifier(
+      xcodeproj: xcodeproj,
+      new_specifier: ENV["sigh_com.vng.kmf.pudgewar_adhoc_profile-name"]
+    )
+
+    # force iTunes file sharing to be enabled (normally disabled for release builds)
+    ENV['WMF_FORCE_ITUNES_FILE_SHARING'] = '1'
+
+    # force debug menu to be shown
+    ENV['WMF_FORCE_DEBUG_MENU'] = '1'
+
+    ENV["GYM_PROJECT"] = xcodeproj
+
+    # unlock_keychain(path: "login.keychain", password: options[:keychain_password])
+    # Build your app - more options available
+    gym
+  end
+
+  # You can define as many lanes as you want
+
+  # Print debug information
+  def print_info()
+    team_id = CredentialsManager::AppfileConfig.try_fetch_value(:team_id)
+    profile_name = ENV["sigh_com.vng.kmf.pudgewar_adhoc_profile-name"]
+    string = "                                                      "
+    UI.message "+--------------+--------------------------------------------------------+"
+    UI.message "|                          build informations                           |"
+    UI.message "+--------------+--------------------------------------------------------+"
+    UI.message "| team_id      | #{team_id}|"
+    UI.message "| profile_name | #{profile_name}|"
+    UI.message "+-----------------------------------------------------------------------+"
+  end
+
+  # Calculate the current week in the month
+  def get_month_week(date_or_time, start_day = :monday)
+    date = date_or_time.to_date
+    week_start_format = start_day == :sunday ? '%U' : '%W'
+
+    month_week_start = Date.new(date.year, date.month, 1)
+    month_week_start_num = month_week_start.strftime(week_start_format).to_i
+    month_week_start_num += 1 if month_week_start.wday > 4 # Skip first week if doesn't contain a Thursday
+
+    month_week_index = date.strftime(week_start_format).to_i - month_week_start_num
+    month_week_index + 1  # Add 1 so that first week is 1 and not 0
+  end
+
+  after_all do |lane|
+    # This block is called, only if the executed lane was successful
+
+    slack(
+      message: "Successfully build new App Update. Deployment will be started at 18:00 everyday."
+    )
+  end
+
+  error do |lane, exception|
+    print_info
+    slack(
+      message: exception.message,
+      success: false
+    )
+  end
+end
+
+# More information about multiple platforms in fastlane: https://github.com/fastlane/fastlane/blob/master/fastlane/docs/Platforms.md
+# All available actions: https://docs.fastlane.tools/actions
+
+# fastlane reports which actions are used
+# No personal data is recorded. Learn more at https://github.com/fastlane/enhancer
